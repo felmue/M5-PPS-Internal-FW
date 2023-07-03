@@ -1,0 +1,351 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2023 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+#include "adc.h"
+#include "dma.h"
+#include "i2c.h"
+#include "tim.h"
+#include "gpio.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+#include "i2c_comm.h"
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+typedef enum {
+  VS_VIN,
+	VS_VOUT,
+	CS_VOUT,
+  VINT_REF,
+  VTEMP,
+  ADC1_CHN_MAX,
+} ADC1_CHN;
+
+typedef enum {
+  PSU_DISABLED,
+  PSU_CV, 
+	PSU_CC,
+  PSU_STATUS_MAX
+} PSU_STATUS;
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+#define ADC_MAX 4095
+#define VREFINT_CALIB (*((uint16_t*)0x1FFF75AA))
+#define VTEMP_CALIB   (*((uint16_t*)0x1FFF75A8))
+#define IOUT_MAX 5.0f
+#define VOUT_MAX 30.0f
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+
+/* USER CODE BEGIN PV */
+PSU_STATUS psu_sys_status = PSU_DISABLED;
+uint8_t seq = 0;
+uint16_t adc1_vals[ADC1_CHN_MAX];
+float adc1_rvals[ADC1_CHN_MAX];
+float adc1_cal_vals[ADC1_CHN_MAX];
+
+float adc1_cal_coeff[ADC1_CHN_MAX] = { 15.70588f, // VS_VIN
+    11.0f, // VS_VOUT
+    820.2f, // CS_VOUT
+    1.0, // Not used
+    1.0, // Not used
+    };
+
+float vout_pwm_calib = 1960.79f;
+float iout_pwm_calib = 12249.0f;
+// float iout_pwm_calib = 14880.0f;  // new
+
+uint8_t reg_byte = 0, sys_stu = PSU_DISABLED, sys_mode = PSU_DISABLED;
+float vout_set = 0.0f;
+float iout_set = 0.0f;
+		
+uint16_t i_pwm_test = 0;
+uint16_t v_pwm_test = 0;
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+/* USER CODE BEGIN PFP */
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
+{
+  for (uint8_t i = 0; i < ADC1_CHN_MAX - 2; i++)
+  {
+    // Compute voltaga before calibration
+    adc1_rvals[i] = (adc1_vals[i] * 3.3f) / 4095.0f;
+    adc1_cal_vals[i] = adc1_rvals[i] * adc1_cal_coeff[i];
+  }
+
+  // Compute temperature
+  float temp_t30 = (float) VTEMP_CALIB / 4095.0f * 3.0f;
+  adc1_rvals[VTEMP] = (3.0f * adc1_vals[VTEMP] * VREFINT_CALIB
+      + (adc1_vals[VINT_REF] * ADC_MAX / 2)) / (adc1_vals[VINT_REF] * ADC_MAX);
+  adc1_cal_vals[VTEMP] = (adc1_rvals[VTEMP] - temp_t30) / 5.336f + 30.0f;
+
+  // Cout
+  adc1_cal_vals[CS_VOUT] = (adc1_vals[CS_VOUT] - 0x0097 /*0ffset*/) / 620.0f;
+
+	// update i2c data
+  set_i2c_reg(PSU_VOUT_READBACK_1, 4, (uint8_t*) &adc1_cal_vals[VS_VOUT]);
+  set_i2c_reg(PSU_IOUT_READBACK_1, 4, (uint8_t*) &adc1_cal_vals[CS_VOUT]);
+  set_i2c_reg(PSU_VIN_READBACK_1, 4, (uint8_t*) &adc1_cal_vals[VS_VIN]);
+  set_i2c_reg(PSU_TEMP_READBACK_1, 4, (uint8_t*) &adc1_cal_vals[VTEMP]);
+
+  set_i2c_reg(PSU_DATA_FLAG, 1, &seq);
+  seq++;
+}
+/* USER CODE END 0 */
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
+  /* USER CODE BEGIN 1 */
+
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
+
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
+  SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_DMA_Init();
+  MX_ADC1_Init();
+  MX_I2C1_Init();
+  MX_TIM1_Init();
+  MX_TIM3_Init();
+  /* USER CODE BEGIN 2 */
+  init_i2c_comm();
+
+  HAL_ADCEx_Calibration_Start(&hadc1);
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*) adc1_vals, ADC1_CHN_MAX);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4);
+
+	// voltage control
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
+  TIM3->CCR2 = (uint16_t) (2.0 * vout_pwm_calib);
+	
+	// current control
+	HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+  // TIM3->CCR1 = (uint16_t) (1.0 * iout_pwm_calib);
+
+  // driver enable
+  HAL_GPIO_WritePin(DRV_EN_GPIO_Port, DRV_EN_Pin, GPIO_PIN_SET);  // A5
+
+	// output enable
+  HAL_GPIO_WritePin(OUT_EN_GPIO_Port, OUT_EN_Pin, GPIO_PIN_SET);  // A12
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+  {
+		if (i_pwm_test != v_pwm_test) {
+			i_pwm_test = v_pwm_test;
+			TIM3->CCR1 = i_pwm_test;
+		}
+		HAL_Delay(1);
+#if 0
+		// check enable flag
+    get_i2c_reg(MODULE_ENABLE, 1, &reg_byte);
+    if (reg_byte != sys_stu)
+    {
+      sys_stu = reg_byte;
+      if (sys_stu) // enable output
+      {
+        HAL_GPIO_WritePin(OUT_EN_GPIO_Port, OUT_EN_Pin, GPIO_PIN_SET);  // A12
+      } else { // disable output
+        // shut up ahhhh
+        HAL_GPIO_WritePin(OUT_EN_GPIO_Port, OUT_EN_Pin, GPIO_PIN_RESET);  // A12
+        // turn off CV/CC LED
+        HAL_GPIO_WritePin(USER_LED_R_GPIO_Port, USER_LED_R_Pin, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(USER_LED_G_GPIO_Port, USER_LED_G_Pin, GPIO_PIN_RESET);
+        // update running mode reg
+        sys_mode = PSU_DISABLED;
+        set_i2c_reg(PSU_RUNNING_MODE, 1, &sys_stu);
+      }
+    }
+    // check mode when output enable
+    if (sys_stu)
+    {
+      if (HAL_GPIO_ReadPin(CVCC_STU_GPIO_Port, CVCC_STU_Pin) == GPIO_PIN_RESET) // A1
+      {
+        sys_mode = PSU_CV;  // Red LED on
+        HAL_GPIO_WritePin(USER_LED_R_GPIO_Port, USER_LED_R_Pin, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(USER_LED_G_GPIO_Port, USER_LED_G_Pin, GPIO_PIN_RESET);
+      } else
+      {
+        sys_mode = PSU_CC;  // Green LED on
+        HAL_GPIO_WritePin(USER_LED_R_GPIO_Port, USER_LED_R_Pin, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(USER_LED_G_GPIO_Port, USER_LED_G_Pin, GPIO_PIN_SET);
+      }
+
+      // check running mode and update
+      get_i2c_reg(PSU_RUNNING_MODE, 1, &reg_byte);
+      if (sys_mode != reg_byte)
+      {
+        set_i2c_reg(PSU_RUNNING_MODE, 1, &sys_mode);
+      }
+
+      // check voltage and current setting
+      float vout_set_read = 0.0f, iout_set_read = 0.0f;
+      get_i2c_reg(PSU_VOUT_SET_1, 4, (uint8_t*) &vout_set_read);
+      get_i2c_reg(PSU_IOUT_SET_1, 4, (uint8_t*) &iout_set_read);
+			
+			
+      if ((vout_set_read > VOUT_MAX) || (vout_set_read < 0.0f))
+      {
+        vout_set = 0.0f;
+      }
+
+      if ((iout_set_read > IOUT_MAX) || (iout_set_read < 0.0f))
+      {
+        iout_set = 0.0f;
+      }
+
+      if (vout_set != vout_set_read)
+      {
+        TIM3->CCR2 = (uint16_t) (vout_set_read * vout_pwm_calib);
+        vout_set = vout_set_read;
+      }
+
+      if (iout_set != iout_set_read)
+      {
+        TIM3->CCR1 = (uint16_t) (iout_set_read * iout_pwm_calib);
+        iout_set = iout_set_read;
+      }
+    }
+#endif
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+  }
+  /* USER CODE END 3 */
+}
+
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  /** Configure the main internal regulator output voltage
+  */
+  HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSIDiv = RCC_HSI_DIV1;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV1;
+  RCC_OscInitStruct.PLL.PLLN = 8;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/* USER CODE BEGIN 4 */
+
+/* USER CODE END 4 */
+
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+  __disable_irq();
+  while (1)
+  {
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
+
+#ifdef  USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */
