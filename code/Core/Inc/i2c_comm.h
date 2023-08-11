@@ -120,6 +120,23 @@ typedef enum {
     PSU_IIN_CALIB_MAX_3,
     PSU_IIN_CALIB_MAX_4,   
 
+    PSU_UID_W0_1 = 0x52, // 4 bytes, float
+    PSU_UID_W0_2,
+    PSU_UID_W0_3,
+    PSU_UID_W0_4,   
+
+    PSU_UID_W1_1 = 0x56, // 4 bytes, float
+    PSU_UID_W1_2,
+    PSU_UID_W1_3,
+    PSU_UID_W1_4,   
+
+    PSU_UID_W2_1 = 0x5A, // 4 bytes, float
+    PSU_UID_W2_2,
+    PSU_UID_W2_3,
+    PSU_UID_W2_4,   
+
+    PSU_SOFT_RESET = 0x5E, // 4 bytes, float
+
     I2C_REG_ZERO,
 
     I2C_REG_MAP_MAX

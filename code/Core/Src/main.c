@@ -167,6 +167,7 @@ uint16_t i_pwm_test = 0;
 uint16_t v_pwm_test = 0;
 
 uint8_t psu_iap_set_value = 0;
+uint8_t psu_soft_reset_value = 0;
 uint8_t psu_cal_save_value = 0;
 uint8_t psu_vout_cal_clear_value = 0;
 uint8_t psu_iout_cal_clear_value = 0;
@@ -211,6 +212,22 @@ double map(double x, double in_min, double in_max, double out_min, double out_ma
   return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
+void init_chipid(void)
+{
+  uint32_t chipid_w0, chipid_w1, chipid_w2;
+
+  chipid_w0 = HAL_GetUIDw0();
+  chipid_w1 = HAL_GetUIDw1();
+  chipid_w2 = HAL_GetUIDw2();
+  // chipid_w0 = 0x55;
+  // chipid_w1 = 0x56;
+  // chipid_w2 = 0x58;
+
+  set_i2c_reg(PSU_UID_W0_1, 4, (uint8_t *)&chipid_w0);  
+  set_i2c_reg(PSU_UID_W1_1, 4, (uint8_t *)&chipid_w1);  
+  set_i2c_reg(PSU_UID_W2_1, 4, (uint8_t *)&chipid_w2);  
+}
+
 void i2c_port_set_to_input(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -242,7 +259,12 @@ void init_flash_data(void)
     memcpy(flash_data + VOUT_FLASH_DATA_SIZE + IOUT_FLASH_DATA_SIZE + IOUT_ZERO_FLASH_DATA_SIZE + VIN_FLASH_DATA_SIZE + IIN_FLASH_DATA_SIZE, 
     (uint8_t*)&iin_zero_max, IIN_ZERO_MAX_FLASH_DATA_SIZE);
     // memcpy(datatmp_current, p_current, 4); 
-    writeMessageToFlash(flash_data , FLASH_DATA_SIZE);
+    int8_t is_flash_write_success = -1;
+    is_flash_write_success = writeMessageToFlash(flash_data , FLASH_DATA_SIZE);
+    while(!is_flash_write_success) {
+      is_flash_write_success = writeMessageToFlash(flash_data , FLASH_DATA_SIZE);
+      HAL_Delay(100);
+    }
   } else {
     memcpy((uint8_t*)&vout_pwm_offset, flash_data, VOUT_FLASH_DATA_SIZE);
     memcpy((uint8_t*)&iout_pwm_offset, flash_data + VOUT_FLASH_DATA_SIZE, IOUT_FLASH_DATA_SIZE);
@@ -272,7 +294,12 @@ void flash_data_write_back(void)
   (uint8_t*)&iin_adc_offset, IIN_FLASH_DATA_SIZE);
   memcpy(flash_data + VOUT_FLASH_DATA_SIZE + IOUT_FLASH_DATA_SIZE + IOUT_ZERO_FLASH_DATA_SIZE + VIN_FLASH_DATA_SIZE + IIN_FLASH_DATA_SIZE, 
   (uint8_t*)&iin_zero_max, IIN_ZERO_MAX_FLASH_DATA_SIZE);   
-  writeMessageToFlash(flash_data , FLASH_DATA_SIZE);  
+  int8_t is_flash_write_success = -1;
+  is_flash_write_success = writeMessageToFlash(flash_data , FLASH_DATA_SIZE);
+  while(!is_flash_write_success) {
+    is_flash_write_success = writeMessageToFlash(flash_data , FLASH_DATA_SIZE);
+    HAL_Delay(100);
+  }
 }
 
 void set_vout_offset_to_default(void)
@@ -398,6 +425,8 @@ int main(void)
 
 	// output enable
   HAL_GPIO_WritePin(OUT_EN_GPIO_Port, OUT_EN_Pin, GPIO_PIN_SET);  // A12
+
+  init_chipid();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -475,6 +504,8 @@ int main(void)
         if (vout_set_int >= 30)
           vout_set_int = 29;
         float vout_set_cal = vout_set_read * vout_pwm_offset[vout_set_int*2] + vout_pwm_offset[vout_set_int*2+1];
+        if (vout_set_cal < 0.0f)
+          vout_set_cal = 0.0f;
         TIM3->CCR2 = (uint16_t) (vout_set_cal * vout_pwm_calib);
         vout_set = vout_set_read;
       }
@@ -671,6 +702,14 @@ int main(void)
         HAL_GPIO_WritePin(OUT_EN_GPIO_Port, OUT_EN_Pin, GPIO_PIN_SET);  // A12        
         jump_bootloader_timeout = 0;
       }      
+    }
+
+    uint8_t psu_soft_reset_read = 0;
+    get_i2c_reg(PSU_SOFT_RESET, 1, (uint8_t*) &psu_soft_reset_read);
+    if (psu_soft_reset_value != psu_soft_reset_read)
+    {
+      set_i2c_reg(PSU_SOFT_RESET, 1, (uint8_t*) &psu_soft_reset_value);
+      HAL_NVIC_SystemReset();     
     }
 
     uint8_t psu_cal_save_read = 0;
