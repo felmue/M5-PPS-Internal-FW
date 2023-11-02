@@ -405,7 +405,7 @@ int main(void)
   init_i2c_comm();
 
   init_flash_data();
-  flash_data_write_back();
+  // flash_data_write_back();
 
   HAL_ADCEx_Calibration_Start(&hadc1);
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*) adc1_vals, ADC1_CHN_MAX);
@@ -459,13 +459,13 @@ int main(void)
       if (HAL_GPIO_ReadPin(CVCC_STU_GPIO_Port, CVCC_STU_Pin) == GPIO_PIN_RESET) // A1
       {
         sys_mode = PSU_CV;  // Red LED on
-        HAL_GPIO_WritePin(USER_LED_R_GPIO_Port, USER_LED_R_Pin, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(USER_LED_G_GPIO_Port, USER_LED_G_Pin, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(USER_LED_R_GPIO_Port, USER_LED_R_Pin, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(USER_LED_G_GPIO_Port, USER_LED_G_Pin, GPIO_PIN_SET);
       } else
       {
         sys_mode = PSU_CC;  // Green LED on
-        HAL_GPIO_WritePin(USER_LED_R_GPIO_Port, USER_LED_R_Pin, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(USER_LED_G_GPIO_Port, USER_LED_G_Pin, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(USER_LED_R_GPIO_Port, USER_LED_R_Pin, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(USER_LED_G_GPIO_Port, USER_LED_G_Pin, GPIO_PIN_RESET);        
       }
 
       // check running mode and update
