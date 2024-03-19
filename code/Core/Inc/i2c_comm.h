@@ -135,7 +135,9 @@ typedef enum {
     PSU_UID_W2_3,
     PSU_UID_W2_4,   
 
-    PSU_SOFT_RESET = 0x5E, // 4 bytes, float
+    PSU_SOFT_RESET = 0x5E, 
+
+    PSU_I2C_ADDRESS = 0x5F, 
 
     I2C_REG_ZERO,
 

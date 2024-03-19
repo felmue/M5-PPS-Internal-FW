@@ -41,7 +41,7 @@ extern "C" {
 
 /* Exported constants --------------------------------------------------------*/
 /* USER CODE BEGIN EC */
-
+extern uint8_t i2c_address[8];
 /* USER CODE END EC */
 
 /* Exported macro ------------------------------------------------------------*/

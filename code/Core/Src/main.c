@@ -52,6 +52,7 @@ typedef enum {
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define I2C_ADDRESS_DEFAULT (106>>1)
 #define ADC_MAX 4095
 #define VREFINT_CALIB (*((uint16_t*)0x1FFF75AA))
 #define VTEMP_CALIB   (*((uint16_t*)0x1FFF75A8))
@@ -67,7 +68,8 @@ typedef enum {
 #define VIN_FLASH_DATA_SIZE 240
 #define IIN_FLASH_DATA_SIZE 400
 #define IIN_ZERO_MAX_FLASH_DATA_SIZE 8
-#define FLASH_DATA_SIZE VOUT_FLASH_DATA_SIZE + IOUT_FLASH_DATA_SIZE + IOUT_ZERO_FLASH_DATA_SIZE + VIN_FLASH_DATA_SIZE + IIN_FLASH_DATA_SIZE + IIN_ZERO_MAX_FLASH_DATA_SIZE
+#define I2C_ADDRESS_FLASH_DATA_SIZE 8
+#define FLASH_DATA_SIZE VOUT_FLASH_DATA_SIZE + IOUT_FLASH_DATA_SIZE + IOUT_ZERO_FLASH_DATA_SIZE + VIN_FLASH_DATA_SIZE + IIN_FLASH_DATA_SIZE + IIN_ZERO_MAX_FLASH_DATA_SIZE + I2C_ADDRESS_FLASH_DATA_SIZE
 #define APPLICATION_ADDRESS     ((uint32_t)0x08001800) 
 /* USER CODE END PD */
 
@@ -149,6 +151,8 @@ uint32_t iout_zero_offset[2] = {4000, 0};
 
 volatile float iin_zero_max[2] = {0.2f, 5.0f};
 
+uint8_t i2c_address[8] = {I2C_ADDRESS_DEFAULT, 0, 0, 0, 0, 0, 0, 0};
+
 uint64_t vout_pwm_calib_setup = 0;
 uint64_t iout_pwm_calib_setup = 0;  // new
 uint64_t vin_adc_calib_setup = 0;  // new
@@ -168,6 +172,7 @@ uint16_t v_pwm_test = 0;
 
 uint8_t psu_iap_set_value = 0;
 uint8_t psu_soft_reset_value = 0;
+uint8_t psu_i2c_address_value = 0;
 uint8_t psu_cal_save_value = 0;
 uint8_t psu_vout_cal_clear_value = 0;
 uint8_t psu_iout_cal_clear_value = 0;
@@ -176,6 +181,7 @@ uint8_t psu_iin_cal_clear_value = 0;
 
 uint8_t flash_data[FLASH_DATA_SIZE] = {0};
 volatile uint32_t jump_bootloader_timeout = 0;
+uint8_t i2c_addr_change_flag = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -258,6 +264,8 @@ void init_flash_data(void)
     (uint8_t*)&iin_adc_offset, IIN_FLASH_DATA_SIZE);
     memcpy(flash_data + VOUT_FLASH_DATA_SIZE + IOUT_FLASH_DATA_SIZE + IOUT_ZERO_FLASH_DATA_SIZE + VIN_FLASH_DATA_SIZE + IIN_FLASH_DATA_SIZE, 
     (uint8_t*)&iin_zero_max, IIN_ZERO_MAX_FLASH_DATA_SIZE);
+    memcpy(flash_data + VOUT_FLASH_DATA_SIZE + IOUT_FLASH_DATA_SIZE + IOUT_ZERO_FLASH_DATA_SIZE + VIN_FLASH_DATA_SIZE + IIN_FLASH_DATA_SIZE + IIN_ZERO_MAX_FLASH_DATA_SIZE, 
+    i2c_address, I2C_ADDRESS_FLASH_DATA_SIZE);
     // memcpy(datatmp_current, p_current, 4); 
     int8_t is_flash_write_success = -1;
     is_flash_write_success = writeMessageToFlash(flash_data , FLASH_DATA_SIZE);
@@ -278,9 +286,13 @@ void init_flash_data(void)
     memcpy((uint8_t*)&iin_zero_max, 
     flash_data + VOUT_FLASH_DATA_SIZE + IOUT_FLASH_DATA_SIZE + IOUT_ZERO_FLASH_DATA_SIZE + VIN_FLASH_DATA_SIZE + IIN_FLASH_DATA_SIZE, 
     IIN_ZERO_MAX_FLASH_DATA_SIZE);
+    memcpy(i2c_address, 
+    flash_data + VOUT_FLASH_DATA_SIZE + IOUT_FLASH_DATA_SIZE + IOUT_ZERO_FLASH_DATA_SIZE + VIN_FLASH_DATA_SIZE + IIN_FLASH_DATA_SIZE + IIN_ZERO_MAX_FLASH_DATA_SIZE, 
+    I2C_ADDRESS_FLASH_DATA_SIZE);
     // memcpy(p_voltage, datatmp_voltage, 4);
     // memcpy(p_current, datatmp_current, 4);    
   }
+  psu_i2c_address_value = i2c_address[0];
 }
 
 void flash_data_write_back(void)
@@ -293,7 +305,10 @@ void flash_data_write_back(void)
   memcpy(flash_data + VOUT_FLASH_DATA_SIZE + IOUT_FLASH_DATA_SIZE + IOUT_ZERO_FLASH_DATA_SIZE + VIN_FLASH_DATA_SIZE, 
   (uint8_t*)&iin_adc_offset, IIN_FLASH_DATA_SIZE);
   memcpy(flash_data + VOUT_FLASH_DATA_SIZE + IOUT_FLASH_DATA_SIZE + IOUT_ZERO_FLASH_DATA_SIZE + VIN_FLASH_DATA_SIZE + IIN_FLASH_DATA_SIZE, 
-  (uint8_t*)&iin_zero_max, IIN_ZERO_MAX_FLASH_DATA_SIZE);   
+  (uint8_t*)&iin_zero_max, IIN_ZERO_MAX_FLASH_DATA_SIZE);  
+  memcpy(flash_data + VOUT_FLASH_DATA_SIZE + IOUT_FLASH_DATA_SIZE + IOUT_ZERO_FLASH_DATA_SIZE + VIN_FLASH_DATA_SIZE + IIN_FLASH_DATA_SIZE + IIN_ZERO_MAX_FLASH_DATA_SIZE, 
+  i2c_address, I2C_ADDRESS_FLASH_DATA_SIZE);   
+  psu_i2c_address_value = i2c_address[0];
   int8_t is_flash_write_success = -1;
   is_flash_write_success = writeMessageToFlash(flash_data , FLASH_DATA_SIZE);
   while(!is_flash_write_success) {
@@ -334,11 +349,9 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
   }
 
   // Compute temperature
-  float temp_t30 = (float) VTEMP_CALIB / 4095.0f * 3.0f;
-  adc1_rvals[VTEMP] = (3.0f * adc1_vals[VTEMP] * VREFINT_CALIB
-      + (adc1_vals[VINT_REF] * ADC_MAX / 2)) / (adc1_vals[VINT_REF] * ADC_MAX);
-  adc1_cal_vals[VTEMP] = (adc1_rvals[VTEMP] - temp_t30) / 5.336f + 30.0f;
-
+  uint16_t temp_adc_12bit = (float)adc1_vals[VTEMP]/65535.0f*4095;
+  uint16_t int_adc_12bit = (float)adc1_vals[VINT_REF]/65535.0f*4095;
+  adc1_cal_vals[VTEMP] = __HAL_ADC_CALC_TEMPERATURE(__HAL_ADC_CALC_VREFANALOG_VOLTAGE(int_adc_12bit, ADC_RESOLUTION_12B), temp_adc_12bit, ADC_RESOLUTION_12B);
   // Cout
   adc1_cal_vals[CS_VOUT] = adc1_cal_vals[CS_VOUT] - iin_zero_max[0];
   // int32_t iin_set_int = (int32_t)(adc1_cal_vals[CS_VOUT]*10);
@@ -398,13 +411,15 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_ADC1_Init();
-  MX_I2C1_Init();
+  // MX_I2C1_Init();
   MX_TIM1_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-  init_i2c_comm();
 
   init_flash_data();
+
+  user_i2c_init();
+  init_i2c_comm();  
   // flash_data_write_back();
 
   HAL_ADCEx_Calibration_Start(&hadc1);
@@ -676,7 +691,7 @@ int main(void)
         MX_GPIO_Init();
         MX_DMA_Init();
         MX_ADC1_Init();
-        MX_I2C1_Init();
+        user_i2c_init();
         MX_TIM1_Init();
         MX_TIM3_Init();
         init_i2c_comm();
@@ -710,6 +725,21 @@ int main(void)
     {
       set_i2c_reg(PSU_SOFT_RESET, 1, (uint8_t*) &psu_soft_reset_value);
       HAL_NVIC_SystemReset();     
+    }
+
+    uint8_t psu_i2c_address_read = 0;
+    get_i2c_reg(PSU_I2C_ADDRESS, 1, (uint8_t*) &psu_i2c_address_read);
+    if (psu_i2c_address_value != psu_i2c_address_read)
+    {
+      if (psu_i2c_address_read > 0 && psu_i2c_address_read < 128) {
+        i2c_address[0] = psu_i2c_address_read;
+        flash_data_write_back();
+        HAL_Delay(10);
+        HAL_I2C_DeInit(&hi2c1);
+        user_i2c_init();
+
+        init_i2c_comm();
+      }
     }
 
     uint8_t psu_cal_save_read = 0;

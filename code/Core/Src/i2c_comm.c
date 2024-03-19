@@ -21,6 +21,7 @@ void init_i2c_comm()
 
   i2c_reg_file[MODULE_ID_L] = 0x41;
   i2c_reg_file[MODULE_ID_H] = 0x10;
+  i2c_reg_file[PSU_I2C_ADDRESS] = i2c_address[0];
 }
 
 void set_i2c_reg(I2C_REG_MAP reg_addr, uint8_t len, uint8_t *data)
@@ -42,7 +43,7 @@ void (*_error_handler)();
 void I2C_Error_Handler()
 {
   HAL_I2C_DeInit(&hi2c1);
-  MX_I2C1_Init();
+  user_i2c_init();
 
   init_i2c_comm();
 }
