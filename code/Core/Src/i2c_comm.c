@@ -21,6 +21,7 @@ void init_i2c_comm()
 
   i2c_reg_file[MODULE_ID_L] = 0x41;
   i2c_reg_file[MODULE_ID_H] = 0x10;
+  i2c_reg_file[MODULE_SW_VERSION] = 1;
   i2c_reg_file[PSU_I2C_ADDRESS] = i2c_address[0];
 }
 

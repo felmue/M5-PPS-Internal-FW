@@ -439,7 +439,7 @@ int main(void)
   HAL_GPIO_WritePin(DRV_EN_GPIO_Port, DRV_EN_Pin, GPIO_PIN_SET);  // A5
 
 	// output enable
-  HAL_GPIO_WritePin(OUT_EN_GPIO_Port, OUT_EN_Pin, GPIO_PIN_SET);  // A12
+  HAL_GPIO_WritePin(OUT_EN_GPIO_Port, OUT_EN_Pin, GPIO_PIN_RESET);  // A12
 
   init_chipid();
   /* USER CODE END 2 */
@@ -469,18 +469,20 @@ int main(void)
       }
     }
     // check mode when output enable
-    if (sys_stu)
+    if (1)
     {
-      if (HAL_GPIO_ReadPin(CVCC_STU_GPIO_Port, CVCC_STU_Pin) == GPIO_PIN_RESET) // A1
-      {
-        sys_mode = PSU_CV;  // Red LED on
-        HAL_GPIO_WritePin(USER_LED_R_GPIO_Port, USER_LED_R_Pin, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(USER_LED_G_GPIO_Port, USER_LED_G_Pin, GPIO_PIN_SET);
-      } else
-      {
-        sys_mode = PSU_CC;  // Green LED on
-        HAL_GPIO_WritePin(USER_LED_R_GPIO_Port, USER_LED_R_Pin, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(USER_LED_G_GPIO_Port, USER_LED_G_Pin, GPIO_PIN_RESET);        
+      if (sys_stu) {
+        if (HAL_GPIO_ReadPin(CVCC_STU_GPIO_Port, CVCC_STU_Pin) == GPIO_PIN_RESET) // A1
+        {
+          sys_mode = PSU_CV;  // Red LED on
+          HAL_GPIO_WritePin(USER_LED_R_GPIO_Port, USER_LED_R_Pin, GPIO_PIN_RESET);
+          HAL_GPIO_WritePin(USER_LED_G_GPIO_Port, USER_LED_G_Pin, GPIO_PIN_SET);
+        } else
+        {
+          sys_mode = PSU_CC;  // Green LED on
+          HAL_GPIO_WritePin(USER_LED_R_GPIO_Port, USER_LED_R_Pin, GPIO_PIN_SET);
+          HAL_GPIO_WritePin(USER_LED_G_GPIO_Port, USER_LED_G_Pin, GPIO_PIN_RESET);
+        }
       }
 
       // check running mode and update
